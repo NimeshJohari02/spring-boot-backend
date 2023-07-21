@@ -9,6 +9,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.* ;
 
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.S3Object;
@@ -55,7 +56,7 @@ public class UserService {
     // Method to download the image from AWS S3 using the provided URL
     private byte[] downloadImageFromS3(String imageUrl) {
         try {
-            String BUCKET_NAME = "shelf";
+            String BUCKET_NAME = "shelf-backend";
             S3Object s3Object = amazonS3Client.getObject(BUCKET_NAME, imageUrl);
             return IOUtils.toByteArray(s3Object.getObjectContent());
         } catch (IOException e) {
@@ -81,8 +82,8 @@ public class UserService {
     private String uploadImageToS3(MultipartFile file, String userEmail) {
         try {
             // Replace "YOUR_S3_BUCKET_NAME" with your actual S3 bucket name
-            String bucketName = "YOUR_S3_BUCKET_NAME";
-            String fileName = userEmail + "/" + file.getOriginalFilename();
+            String bucketName = "shelf-backend";
+            String fileName = generateFileName(file);
             ObjectMetadata metadata = new ObjectMetadata();
             metadata.setContentType(file.getContentType());
             metadata.setContentLength(file.getSize());
@@ -95,5 +96,71 @@ public class UserService {
             e.printStackTrace();
             return null;
         }
+    }
+    private String generateFileName(MultipartFile file) {
+        // Generate a unique file name for the uploaded image
+        return UUID.randomUUID().toString() + "-" + file.getOriginalFilename();
+    }
+
+
+    public User createUserWithImage(String name, String email, MultipartFile profileImage) {
+        User user = new User();
+        user.setName(name);
+        user.setEmail(email);
+
+        // Step 2: Save the user object to MongoDB to generate an ObjectId
+        user = userRepository.save(user);
+
+        // Step 3: Upload the profileImage to AWS S3
+        String fileName = generateFileName(profileImage);
+        String fileUrl = uploadImageToS3( profileImage , fileName);
+        user.setAvatarUrl(fileUrl);
+        // Save the updated user object to MongoDB
+        user = userRepository.save(user);
+
+        return user;
+    }
+
+    public User getUserByEmail(String email) {
+        // Use the UserRepository to fetch the user by email
+        return userRepository.findByEmail(email);
+    }
+    public User updateUserImageByEmail(String email, MultipartFile profileImage) {
+        // Retrieve the user from MongoDB based on the email
+        User user = userRepository.findByEmail(email);
+        if (user == null) {
+            throw new RuntimeException("User not found with email: " + email);
+        }
+
+        // Step 1: Generate a unique file name for the uploaded image
+        String fileName = generateFileName(profileImage);
+
+        // Step 2: Upload the profileImage to AWS S3
+        String fileUrl = uploadImageToS3( profileImage , fileName);
+        // Update the user's avatarUrl with the new S3 URL
+        user.setAvatarUrl(fileUrl);
+        // Save the updated user object to MongoDB
+        user = userRepository.save(user);
+
+        return user;
+    }
+    public User deleteUserImageByEmail(String email) {
+        // Retrieve the user from MongoDB based on the email
+        User user = userRepository.findByEmail(email);
+        if (user == null) {
+            throw new RuntimeException("User not found with email: " + email);
+        }
+
+        // Delete the user's image from AWS S3
+        String avatarUrl = user.getAvatarUrl();
+        if (avatarUrl != null && !avatarUrl.isEmpty()) {
+            deleteImageFromS3(avatarUrl);
+            // Clear the user's avatarUrl in the user object
+            user.setAvatarUrl("");
+            // Save the updated user object to MongoDB
+            user = userRepository.save(user);
+        }
+
+        return user;
     }
 }
