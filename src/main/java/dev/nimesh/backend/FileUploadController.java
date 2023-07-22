@@ -41,6 +41,7 @@ public class FileUploadController {
     ) {
         return userService.updateUserImageByEmail(email, profileImage);
     }
+    @PostMapping("/delete")
     public User deleteUserImageByEmail(@RequestParam("email") String email) {
         return userService.deleteUserImageByEmail(email);
     }

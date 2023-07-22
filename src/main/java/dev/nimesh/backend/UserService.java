@@ -1,10 +1,15 @@
 package dev.nimesh.backend;
 
+import com.amazonaws.services.s3.model.DeleteObjectRequest;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.cache.annotation.CachePut;
+
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,43 +20,40 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.S3Object;
 import org.apache.commons.io.IOUtils;
 @Service
+@CacheConfig(cacheNames = "users")
 public class UserService {
 
-    private final ImageRepository imageRepository;
+
     private final UserRepository userRepository;
     private final AmazonS3 amazonS3Client; // Inject the AmazonS3 client to interact with AWS S3
 
+    private final ImageService imageService; // Inject the ImageService
+
+
     @Autowired
-    public UserService(ImageRepository imageRepository, UserRepository userRepository, AmazonS3 amazonS3Client) {
-        this.imageRepository = imageRepository;
+    public UserService(UserRepository userRepository, AmazonS3 amazonS3Client ,ImageService imageService ) {
         this.userRepository = userRepository;
         this.amazonS3Client = amazonS3Client;
+        this.imageService = imageService;
     }
 
-    // Method to retrieve the image from H2 if available, otherwise from AWS S3
-    @Cacheable("userImages") // Cache the images with the key "userImages"
+
+    @Cacheable(key = "'image:' + #email", cacheNames = "images")
     public byte[] getImageByEmail(String email) {
-        ImageEntity imageEntity = imageRepository.findByEmail(email);
-        if (imageEntity != null) {
-            // If image is found in H2, return the image data
-            return imageEntity.getImageData();
+        User user = userRepository.findByEmail(email);
+        if (user != null && user.getAvatarUrl() != null) {
+            // Use the ImageService to fetch the image data from cache or S3
+            byte[] data =  imageService.getImageDataFromCache(email);
+            if(data != null) return data;
+            byte[] dataFromS3 = downloadImageFromS3(user.getAvatarUrl());
+            imageService.cacheImageData(email , dataFromS3);
+            return dataFromS3 ;
         } else {
-            // If image is not in H2, try to fetch it from AWS S3
-            User user = userRepository.findByEmail(email);
-            if (user != null && user.getAvatarUrl() != null) {
-                byte[] imageData = downloadImageFromS3(user.getAvatarUrl());
-                if (imageData != null) {
-                    // If image is downloaded from S3, save it in H2 for future use
-                    imageEntity = new ImageEntity(email, imageData);
-                    imageRepository.save(imageEntity);
-                }
-                return imageData;
-            } else {
-                // If user or image URL is not found in MongoDB, return null
-                return null;
-            }
+            // If user or image URL is not found in MongoDB or S3, return null
+            return null;
         }
     }
+
 
     // Method to download the image from AWS S3 using the provided URL
     private byte[] downloadImageFromS3(String imageUrl) {
@@ -64,6 +66,9 @@ public class UserService {
             return null;
         }
     }
+    private byte[] convertFileToBytes(MultipartFile file) throws IOException {
+        return file.getBytes();
+    }
 
     public void uploadImageAndSaveToUser(MultipartFile file, String userEmail) {
         User user = userRepository.findByEmail(userEmail);
@@ -73,9 +78,18 @@ public class UserService {
         }
         String imageUrl = uploadImageToS3(file, userEmail);
 
-        // Save the image URL to the user in MongoDB
         user.setAvatarUrl(imageUrl);
         userRepository.save(user);
+
+        byte[] fileData;
+        try {
+            fileData = file.getBytes();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to convert file to byte array.");
+        }
+
+        // Store the file data in Redis with the email as the key using ImageService
+        imageService.cacheImageData(userEmail, fileData);
     }
 
     // Helper method to upload image to S3
@@ -103,7 +117,19 @@ public class UserService {
     }
 
 
+    @CachePut(key = "#email")
     public User createUserWithImage(String name, String email, MultipartFile profileImage) {
+        try{// Adding FileType and FileSize Checks
+        // Limit the file size to 5MB (you can adjust the size as needed)
+        if (profileImage.getSize() > 5 * 1024 * 1024) {
+            throw new IllegalArgumentException("File size exceeds the limit of 5MB.");
+        }
+
+        // Check if the file type is JPG
+        if (!profileImage.getContentType().equals("image/jpeg")) {
+            throw new IllegalArgumentException("Only JPG images are allowed.");
+        }
+
         User user = new User();
         user.setName(name);
         user.setEmail(email);
@@ -119,8 +145,16 @@ public class UserService {
         user = userRepository.save(user);
 
         return user;
+        }
+        catch (Exception e) {
+            // Handle the exception appropriately (e.g., log the error, throw custom exception)
+            e.printStackTrace();
+            throw new RuntimeException("Failed to upload profile image.");
+        }
+
     }
 
+    @Cacheable(key = "#email", cacheNames = "users")
     public User getUserByEmail(String email) {
         // Use the UserRepository to fetch the user by email
         return userRepository.findByEmail(email);
@@ -143,6 +177,11 @@ public class UserService {
         user = userRepository.save(user);
 
         return user;
+    }
+    private void deleteImageFromS3(String fileName) {
+        // Delete the image from S3 using the generated file name (object key)
+        String bucketName = "shelf-backend";
+        amazonS3Client.deleteObject(new DeleteObjectRequest(bucketName, fileName));
     }
     public User deleteUserImageByEmail(String email) {
         // Retrieve the user from MongoDB based on the email

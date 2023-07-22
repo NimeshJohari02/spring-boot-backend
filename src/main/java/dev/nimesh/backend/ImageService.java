@@ -1,21 +1,25 @@
 package dev.nimesh.backend;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ImageService {
 
-    private final ImageRepository imageRepository;
+    private final RedisTemplate<String, byte[]> redisTemplate;
 
     @Autowired
-    public ImageService(ImageRepository imageRepository) {
-        this.imageRepository = imageRepository;
+    public ImageService(RedisTemplate<String, byte[]> redisTemplate) {
+        this.redisTemplate = redisTemplate;
     }
 
-    // Method to retrieve the image from the H2 database by email
-    public byte[] getImageByEmail(String email) {
-        ImageEntity imageEntity = imageRepository.findByEmail(email);
-        return imageEntity != null ? imageEntity.getImageData() : null;
+    public byte[] getImageDataFromCache(String userEmail) {
+        return redisTemplate.opsForValue().get("image:" + userEmail);
     }
+
+    public void cacheImageData(String userEmail, byte[] fileData) {
+        redisTemplate.opsForValue().set("image:" + userEmail, fileData);
+    }
+
 }

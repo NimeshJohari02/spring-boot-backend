@@ -29,6 +29,8 @@ dependencies {
 	implementation group: 'com.amazonaws', name: 'aws-java-sdk-s3', version: '1.12.510'
 	implementation 'software.amazon.awssdk:s3:2.17.65' // Replace with the latest version available
 	implementation 'commons-io:commons-io:2.11.0'
+	implementation 'redis.clients:jedis:4.3.1'
+
 }
 
 tasks.named('test') {

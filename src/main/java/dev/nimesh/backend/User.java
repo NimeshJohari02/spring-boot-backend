@@ -2,14 +2,19 @@ package dev.nimesh.backend;
 
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.io.Serializable;
+
 @Document(collection = "users")
-public class User {
+public class User implements Serializable {
+    private static final long serialVersionUID = 1L;
     @Id
     private String id;
 
     private String name;
+    @Indexed(unique = true)
     private String email;
     private String avatarUrl;
     // Getters and setters for the properties
